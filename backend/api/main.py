@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
 from backend.api.config import settings
+from backend.api.routes.health import router as health_router
+from backend.api.routes.root import router as root_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -8,19 +10,5 @@ app = FastAPI(
     version="0.1.0",
 )
 
-
-@app.get("/")
-def root():
-    return {
-        "project": settings.APP_NAME,
-        "environment": settings.APP_ENV,
-        "status": "running",
-        "message": "AI Revenue Recovery Orchestrator",
-    }
-
-
-@app.get("/health")
-def health_check():
-    return {
-        "status": "healthy"
-    }
+app.include_router(root_router)
+app.include_router(health_router)
