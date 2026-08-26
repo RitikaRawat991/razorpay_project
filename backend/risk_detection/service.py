@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from backend.revenue_monitor.monitor import PaymentEvent
 from backend.risk_detection.detector import RiskDetector
 from backend.risk_detection.diagnosis import RootCauseDiagnoser
+from backend.risk_detection.guard import RecoveryGuard
 from backend.risk_detection.history import get_previous_failure_count
 from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.opportunity import create_recovery_opportunity
@@ -17,6 +18,7 @@ class RiskDetectionService:
         self.diagnoser = RootCauseDiagnoser()
         self.memory = RecoveryMemoryService()
         self.predictor = RecoveryPredictor()
+        self.guard = RecoveryGuard()
 
     def evaluate(
         self,
@@ -42,6 +44,7 @@ class RiskDetectionService:
         diagnosis = None
         memory = None
         prediction = None
+        guard_decision = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -83,7 +86,15 @@ class RiskDetectionService:
                 previous_failures=previous_failures,
             )
 
-            # 6. Create recovery opportunity
+            # 6. Check whether the predicted action is safe
+            guard_decision = self.guard.check(
+                action=prediction.recommended_action,
+                confidence=diagnosis.confidence,
+                recoverable=diagnosis.recoverable,
+                amount=event.amount,
+            )
+
+            # 7. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -100,5 +111,6 @@ class RiskDetectionService:
             "diagnosis": diagnosis,
             "memory": memory,
             "prediction": prediction,
+            "guard": guard_decision,
             "opportunity": opportunity,
         }
