@@ -6,6 +6,7 @@ from backend.risk_detection.diagnosis import RootCauseDiagnoser
 from backend.risk_detection.history import get_previous_failure_count
 from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.opportunity import create_recovery_opportunity
+from backend.risk_detection.predictor import RecoveryPredictor
 from backend.risk_detection.scorer import OpportunityScorer
 
 
@@ -15,6 +16,7 @@ class RiskDetectionService:
         self.scorer = OpportunityScorer()
         self.diagnoser = RootCauseDiagnoser()
         self.memory = RecoveryMemoryService()
+        self.predictor = RecoveryPredictor()
 
     def evaluate(
         self,
@@ -39,9 +41,11 @@ class RiskDetectionService:
         opportunity_score = None
         diagnosis = None
         memory = None
+        prediction = None
         previous_failures = 0
 
         if risk.is_risky:
+
             # 1. Get historical failure information
             previous_failures = get_previous_failure_count(
                 db=db,
@@ -72,7 +76,14 @@ class RiskDetectionService:
                 root_cause=diagnosis.root_cause,
             )
 
-            # 5. Create recovery opportunity
+            # 5. Predict recovery outcome
+            prediction = self.predictor.predict(
+                amount=event.amount,
+                root_cause=diagnosis.root_cause,
+                previous_failures=previous_failures,
+            )
+
+            # 6. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -88,5 +99,6 @@ class RiskDetectionService:
             "opportunity_score": opportunity_score,
             "diagnosis": diagnosis,
             "memory": memory,
+            "prediction": prediction,
             "opportunity": opportunity,
         }
