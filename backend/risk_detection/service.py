@@ -8,6 +8,7 @@ from backend.risk_detection.guard import RecoveryGuard
 from backend.risk_detection.history import get_previous_failure_count
 from backend.risk_detection.learning import RecoveryLearningService
 from backend.risk_detection.memory import RecoveryMemoryService
+from backend.risk_detection.merchant_learning import MerchantLearningService
 from backend.risk_detection.opportunity import create_recovery_opportunity
 from backend.risk_detection.predictor import RecoveryPredictor
 from backend.risk_detection.scorer import OpportunityScorer
@@ -25,6 +26,7 @@ class RiskDetectionService:
         self.executor = RecoveryActionExecutor()
         self.verifier = RecoveryVerifier()
         self.learning = RecoveryLearningService()
+        self.merchant_learning = MerchantLearningService()
 
     def evaluate(
         self,
@@ -54,6 +56,7 @@ class RiskDetectionService:
         execution = None
         verification = None
         learning = None
+        merchant_learning = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -116,14 +119,20 @@ class RiskDetectionService:
                 amount=event.amount,
             )
 
-            # 9. Learn from recovery outcome
+            # 9. Learn from customer recovery outcome
             learning = self.learning.learn(
                 db=db,
                 memory_id=memory.id,
                 recovered=verification.recovered,
             )
 
-            # 10. Create recovery opportunity
+            # 10. Learn merchant-level recovery pattern
+            merchant_learning = self.merchant_learning.learn(
+                db=db,
+                merchant_id=event.merchant_id,
+            )
+
+            # 11. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -144,5 +153,6 @@ class RiskDetectionService:
             "execution": execution,
             "verification": verification,
             "learning": learning,
+            "merchant_learning": merchant_learning,
             "opportunity": opportunity,
         }
