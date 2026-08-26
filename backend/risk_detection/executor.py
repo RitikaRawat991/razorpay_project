@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 
+from backend.razorpay.client import RazorpayClient
+
 
 @dataclass
 class ExecutionResult:
     executed: bool
     action: str
     message: str
+    external_reference: str | None = None
 
 
 class RecoveryActionExecutor:
@@ -16,10 +19,15 @@ class RecoveryActionExecutor:
         "request_customer_action",
     }
 
+    def __init__(self):
+        self.razorpay_client = RazorpayClient()
+
     def execute(
         self,
         action: str,
         guard_allowed: bool,
+        payment_id: str | None = None,
+        amount: int = 0,
     ) -> ExecutionResult:
 
         if not guard_allowed:
@@ -36,8 +44,33 @@ class RecoveryActionExecutor:
                 message="action is not approved for execution",
             )
 
+        if not payment_id:
+            return ExecutionResult(
+                executed=False,
+                action=action,
+                message="payment_id is required for recovery execution",
+            )
+
+        if action == "retry_payment":
+            result = self.razorpay_client.retry_payment(
+                payment_id=payment_id,
+                amount=amount,
+            )
+
+        elif action == "retry_alternate_method":
+            result = self.razorpay_client.retry_alternate_method(
+                payment_id=payment_id,
+                amount=amount,
+            )
+
+        else:
+            result = self.razorpay_client.request_customer_action(
+                payment_id=payment_id,
+            )
+
         return ExecutionResult(
-            executed=True,
-            action=action,
-            message=f"{action} execution accepted",
+            executed=result.success,
+            action=result.action,
+            message=result.message,
+            external_reference=result.external_reference,
         )

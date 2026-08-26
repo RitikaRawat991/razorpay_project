@@ -47,6 +47,7 @@ class RiskDetectionService:
             "failure_reason": event.failure_reason,
         }
 
+        # 1. Detect payment risk
         risk = self.detector.assess(payment)
 
         opportunity = None
@@ -65,21 +66,21 @@ class RiskDetectionService:
 
         if risk.is_risky:
 
-            # 1. Get historical failure information
+            # 2. Get historical failure information
             previous_failures = get_previous_failure_count(
                 db=db,
                 merchant_id=event.merchant_id,
                 payment_id=database_payment_id,
             )
 
-            # 2. Calculate recovery opportunity score
+            # 3. Calculate recovery opportunity score
             opportunity_score = self.scorer.calculate(
                 risk_score=risk.risk_score,
                 amount=event.amount,
                 previous_failures=previous_failures,
             )
 
-            # 3. Diagnose the root cause
+            # 4. Diagnose root cause
             diagnosis = self.diagnoser.diagnose(
                 status=event.status,
                 failure_reason=event.failure_reason,
@@ -87,7 +88,7 @@ class RiskDetectionService:
                 previous_failures=previous_failures,
             )
 
-            # 4. Store customer recovery memory
+            # 5. Store customer recovery memory
             memory = self.memory.record(
                 db=db,
                 customer_id=event.customer_id,
@@ -95,14 +96,14 @@ class RiskDetectionService:
                 root_cause=diagnosis.root_cause,
             )
 
-            # 5. Predict recovery outcome
+            # 6. Predict recovery outcome
             prediction = self.predictor.predict(
                 amount=event.amount,
                 root_cause=diagnosis.root_cause,
                 previous_failures=previous_failures,
             )
 
-            # 6. Check whether the predicted action is safe
+            # 7. Check whether predicted action is safe
             guard_decision = self.guard.check(
                 action=prediction.recommended_action,
                 confidence=diagnosis.confidence,
@@ -110,33 +111,38 @@ class RiskDetectionService:
                 amount=event.amount,
             )
 
-            # 7. Execute only if Guard allows it
+            # 8. Execute only if Guard allows it
+            #
+            # payment_id and amount are passed to the executor so that
+            # the Razorpay integration layer can receive the payment data.
             execution = self.executor.execute(
                 action=prediction.recommended_action,
                 guard_allowed=guard_decision.allowed,
+                payment_id=event.payment_id,
+                amount=event.amount,
             )
 
-            # 8. Verify recovery outcome
+            # 9. Verify recovery outcome
             verification = self.verifier.verify(
                 executed=execution.executed,
                 payment_status=event.status,
                 amount=event.amount,
             )
 
-            # 9. Learn from customer recovery outcome
+            # 10. Learn from customer recovery outcome
             learning = self.learning.learn(
                 db=db,
                 memory_id=memory.id,
                 recovered=verification.recovered,
             )
 
-            # 10. Learn merchant-level recovery pattern
+            # 11. Learn merchant-level recovery pattern
             merchant_learning = self.merchant_learning.learn(
                 db=db,
                 merchant_id=event.merchant_id,
             )
 
-            # 11. Create recovery opportunity
+            # 12. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -145,7 +151,7 @@ class RiskDetectionService:
                 reason=diagnosis.root_cause,
             )
 
-            # 12. Persist recovery action
+            # 13. Persist recovery action
             if opportunity is not None:
                 recovery_action = create_recovery_action(
                     db=db,
@@ -154,7 +160,7 @@ class RiskDetectionService:
                     reason=diagnosis.root_cause,
                 )
 
-                # 13. Persist verified recovery outcome
+                # 14. Persist verified recovery outcome
                 recovery_outcome = create_recovery_outcome(
                     db=db,
                     action_id=recovery_action.id,
