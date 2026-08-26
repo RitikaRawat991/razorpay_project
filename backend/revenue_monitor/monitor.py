@@ -1,42 +1,24 @@
-from dataclasses import dataclass
-from datetime import datetime
+from sqlalchemy.orm import Session
 
-from backend.risk_detection.detector import RiskDetector
-
-@dataclass
-class PaymentEvent:
-    payment_id: int
-    merchant_id: int
-    customer_id: int
-    amount: int
-    status: str
-    method: str
-    created_at: datetime
-    failure_reason: str | None = None
+from backend.revenue_monitor.events import PaymentEvent
+from backend.risk_detection.service import RiskDetectionService
 
 
 class RevenueMonitor:
     def __init__(self):
-        self.risk_detector = RiskDetector()
+        self.risk_detection_service = RiskDetectionService()
 
-    def process_payment(self, event: PaymentEvent) -> dict:
-        payment = {
-            "payment_id": event.payment_id,
-            "merchant_id": event.merchant_id,
-            "customer_id": event.customer_id,
-            "amount": event.amount,
-            "status": event.status,
-            "method": event.method,
-            "created_at": event.created_at,
-        }
+    def process_payment(
+        self,
+        db: Session,
+        event: PaymentEvent,
+        database_payment_id: int,
+    ) -> dict:
 
-        risk = self.risk_detector.assess(payment)
+        result = self.risk_detection_service.evaluate(
+            db=db,
+            event=event,
+            database_payment_id=database_payment_id,
+        )
 
-        return {
-            "payment": payment,
-            "risk": {
-                "is_risky": risk.is_risky,
-                "risk_score": risk.risk_score,
-                "reason": risk.reason,
-            },
-        }
+        return result

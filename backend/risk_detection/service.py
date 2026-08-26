@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
-from backend.revenue_monitor.monitor import PaymentEvent
+from backend.revenue_monitor.events import PaymentEvent
+from backend.risk_detection.action import create_recovery_action
 from backend.risk_detection.detector import RiskDetector
 from backend.risk_detection.diagnosis import RootCauseDiagnoser
 from backend.risk_detection.executor import RecoveryActionExecutor
@@ -10,6 +11,7 @@ from backend.risk_detection.learning import RecoveryLearningService
 from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.merchant_learning import MerchantLearningService
 from backend.risk_detection.opportunity import create_recovery_opportunity
+from backend.risk_detection.outcome import create_recovery_outcome
 from backend.risk_detection.predictor import RecoveryPredictor
 from backend.risk_detection.scorer import OpportunityScorer
 from backend.risk_detection.verification import RecoveryVerifier
@@ -57,6 +59,8 @@ class RiskDetectionService:
         verification = None
         learning = None
         merchant_learning = None
+        recovery_action = None
+        recovery_outcome = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -141,6 +145,28 @@ class RiskDetectionService:
                 reason=diagnosis.root_cause,
             )
 
+            # 12. Persist recovery action
+            if opportunity is not None:
+                recovery_action = create_recovery_action(
+                    db=db,
+                    opportunity_id=opportunity.id,
+                    action_type=prediction.recommended_action,
+                    reason=diagnosis.root_cause,
+                )
+
+                # 13. Persist verified recovery outcome
+                recovery_outcome = create_recovery_outcome(
+                    db=db,
+                    action_id=recovery_action.id,
+                    recovered=verification.recovered,
+                    recovered_amount=verification.recovered_amount,
+                    failure_reason=(
+                        None
+                        if verification.recovered
+                        else verification.message
+                    ),
+                )
+
         return {
             "payment": payment,
             "risk": risk,
@@ -155,4 +181,6 @@ class RiskDetectionService:
             "learning": learning,
             "merchant_learning": merchant_learning,
             "opportunity": opportunity,
+            "recovery_action": recovery_action,
+            "recovery_outcome": recovery_outcome,
         }
