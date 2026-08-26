@@ -10,6 +10,7 @@ from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.opportunity import create_recovery_opportunity
 from backend.risk_detection.predictor import RecoveryPredictor
 from backend.risk_detection.scorer import OpportunityScorer
+from backend.risk_detection.verification import RecoveryVerifier
 
 
 class RiskDetectionService:
@@ -21,6 +22,7 @@ class RiskDetectionService:
         self.predictor = RecoveryPredictor()
         self.guard = RecoveryGuard()
         self.executor = RecoveryActionExecutor()
+        self.verifier = RecoveryVerifier()
 
     def evaluate(
         self,
@@ -48,6 +50,7 @@ class RiskDetectionService:
         prediction = None
         guard_decision = None
         execution = None
+        verification = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -103,7 +106,14 @@ class RiskDetectionService:
                 guard_allowed=guard_decision.allowed,
             )
 
-            # 8. Create recovery opportunity
+            # 8. Verify recovery outcome
+            verification = self.verifier.verify(
+                executed=execution.executed,
+                payment_status=event.status,
+                amount=event.amount,
+            )
+
+            # 9. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -122,5 +132,6 @@ class RiskDetectionService:
             "prediction": prediction,
             "guard": guard_decision,
             "execution": execution,
+            "verification": verification,
             "opportunity": opportunity,
         }
