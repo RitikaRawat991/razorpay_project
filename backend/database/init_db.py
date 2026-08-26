@@ -1,6 +1,12 @@
 from backend.database.base import Base
 from backend.database.connection import engine
-from backend.database.models import Customer, Merchant, Payment
+from backend.database.models import (
+    Customer,
+    Merchant,
+    Payment,
+    RecoveryOpportunity,
+    RecoveryMemory,
+)
 
 
 def init_db():

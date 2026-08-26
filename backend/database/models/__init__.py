@@ -4,7 +4,7 @@ from backend.database.models.payment import Payment
 from backend.database.models.recovery_action import RecoveryAction
 from backend.database.models.recovery_opportunity import RecoveryOpportunity
 from backend.database.models.recovery_outcome import RecoveryOutcome
-
+from backend.database.models.recovery_memory import RecoveryMemory
 __all__ = [
     "Customer",
     "Merchant",

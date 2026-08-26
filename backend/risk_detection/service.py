@@ -4,6 +4,7 @@ from backend.revenue_monitor.monitor import PaymentEvent
 from backend.risk_detection.detector import RiskDetector
 from backend.risk_detection.diagnosis import RootCauseDiagnoser
 from backend.risk_detection.history import get_previous_failure_count
+from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.opportunity import create_recovery_opportunity
 from backend.risk_detection.scorer import OpportunityScorer
 
@@ -13,6 +14,7 @@ class RiskDetectionService:
         self.detector = RiskDetector()
         self.scorer = OpportunityScorer()
         self.diagnoser = RootCauseDiagnoser()
+        self.memory = RecoveryMemoryService()
 
     def evaluate(
         self,
@@ -28,7 +30,7 @@ class RiskDetectionService:
             "status": event.status,
             "method": event.method,
             "created_at": event.created_at,
-	    "failure_reason": event.failure_reason,
+            "failure_reason": event.failure_reason,
         }
 
         risk = self.detector.assess(payment)
@@ -36,21 +38,25 @@ class RiskDetectionService:
         opportunity = None
         opportunity_score = None
         diagnosis = None
+        memory = None
         previous_failures = 0
 
         if risk.is_risky:
+            # 1. Get historical failure information
             previous_failures = get_previous_failure_count(
                 db=db,
                 merchant_id=event.merchant_id,
                 payment_id=database_payment_id,
             )
 
+            # 2. Calculate recovery opportunity score
             opportunity_score = self.scorer.calculate(
                 risk_score=risk.risk_score,
                 amount=event.amount,
                 previous_failures=previous_failures,
             )
 
+            # 3. Diagnose the root cause
             diagnosis = self.diagnoser.diagnose(
                 status=event.status,
                 failure_reason=event.failure_reason,
@@ -58,6 +64,15 @@ class RiskDetectionService:
                 previous_failures=previous_failures,
             )
 
+            # 4. Store customer recovery memory
+            memory = self.memory.record(
+                db=db,
+                customer_id=event.customer_id,
+                payment_id=database_payment_id,
+                root_cause=diagnosis.root_cause,
+            )
+
+            # 5. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -72,5 +87,6 @@ class RiskDetectionService:
             "previous_failures": previous_failures,
             "opportunity_score": opportunity_score,
             "diagnosis": diagnosis,
+            "memory": memory,
             "opportunity": opportunity,
         }
