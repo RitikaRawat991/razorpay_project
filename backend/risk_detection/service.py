@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from backend.revenue_monitor.monitor import PaymentEvent
 from backend.risk_detection.detector import RiskDetector
+from backend.risk_detection.diagnosis import RootCauseDiagnoser
 from backend.risk_detection.history import get_previous_failure_count
 from backend.risk_detection.opportunity import create_recovery_opportunity
 from backend.risk_detection.scorer import OpportunityScorer
@@ -11,6 +12,7 @@ class RiskDetectionService:
     def __init__(self):
         self.detector = RiskDetector()
         self.scorer = OpportunityScorer()
+        self.diagnoser = RootCauseDiagnoser()
 
     def evaluate(
         self,
@@ -26,12 +28,14 @@ class RiskDetectionService:
             "status": event.status,
             "method": event.method,
             "created_at": event.created_at,
+	    "failure_reason": event.failure_reason,
         }
 
         risk = self.detector.assess(payment)
 
         opportunity = None
         opportunity_score = None
+        diagnosis = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -47,12 +51,19 @@ class RiskDetectionService:
                 previous_failures=previous_failures,
             )
 
+            diagnosis = self.diagnoser.diagnose(
+                status=event.status,
+                failure_reason=event.failure_reason,
+                method=event.method,
+                previous_failures=previous_failures,
+            )
+
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
                 customer_id=event.customer_id,
                 risk_score=opportunity_score.score,
-                reason=risk.reason,
+                reason=diagnosis.root_cause,
             )
 
         return {
@@ -60,5 +71,6 @@ class RiskDetectionService:
             "risk": risk,
             "previous_failures": previous_failures,
             "opportunity_score": opportunity_score,
+            "diagnosis": diagnosis,
             "opportunity": opportunity,
         }

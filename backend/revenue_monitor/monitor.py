@@ -3,7 +3,6 @@ from datetime import datetime
 
 from backend.risk_detection.detector import RiskDetector
 
-
 @dataclass
 class PaymentEvent:
     payment_id: int
@@ -13,6 +12,7 @@ class PaymentEvent:
     status: str
     method: str
     created_at: datetime
+    failure_reason: str | None = None
 
 
 class RevenueMonitor:
