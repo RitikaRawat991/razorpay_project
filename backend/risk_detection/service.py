@@ -6,6 +6,7 @@ from backend.risk_detection.diagnosis import RootCauseDiagnoser
 from backend.risk_detection.executor import RecoveryActionExecutor
 from backend.risk_detection.guard import RecoveryGuard
 from backend.risk_detection.history import get_previous_failure_count
+from backend.risk_detection.learning import RecoveryLearningService
 from backend.risk_detection.memory import RecoveryMemoryService
 from backend.risk_detection.opportunity import create_recovery_opportunity
 from backend.risk_detection.predictor import RecoveryPredictor
@@ -23,6 +24,7 @@ class RiskDetectionService:
         self.guard = RecoveryGuard()
         self.executor = RecoveryActionExecutor()
         self.verifier = RecoveryVerifier()
+        self.learning = RecoveryLearningService()
 
     def evaluate(
         self,
@@ -51,6 +53,7 @@ class RiskDetectionService:
         guard_decision = None
         execution = None
         verification = None
+        learning = None
         previous_failures = 0
 
         if risk.is_risky:
@@ -113,7 +116,14 @@ class RiskDetectionService:
                 amount=event.amount,
             )
 
-            # 9. Create recovery opportunity
+            # 9. Learn from recovery outcome
+            learning = self.learning.learn(
+                db=db,
+                memory_id=memory.id,
+                recovered=verification.recovered,
+            )
+
+            # 10. Create recovery opportunity
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
@@ -133,5 +143,6 @@ class RiskDetectionService:
             "guard": guard_decision,
             "execution": execution,
             "verification": verification,
+            "learning": learning,
             "opportunity": opportunity,
         }
