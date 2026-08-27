@@ -18,6 +18,7 @@ class RecoveryVerifier:
         amount: int,
     ) -> RecoveryVerification:
 
+        # Recovery action was not executed
         if not executed:
             return RecoveryVerification(
                 verified=True,
@@ -26,6 +27,7 @@ class RecoveryVerifier:
                 message="recovery action was not executed",
             )
 
+        # Payment was successfully recovered
         if payment_status == "success":
             return RecoveryVerification(
                 verified=True,
@@ -34,9 +36,13 @@ class RecoveryVerifier:
                 message="payment recovered successfully",
             )
 
+        # Recovery action executed, but payment is still failed
         return RecoveryVerification(
             verified=True,
             recovered=False,
             recovered_amount=0,
-            message="recovery action executed but payment was not recovered",
+            message=(
+                "recovery action executed but payment "
+                "was not recovered"
+            ),
         )

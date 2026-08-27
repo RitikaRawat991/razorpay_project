@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.database.models import Payment
@@ -14,25 +15,21 @@ class RazorpayWebhookService:
         payload: RazorpayPaymentWebhook,
     ) -> dict:
 
-        # Check whether this Razorpay payment was already received.
+        # Check whether this Razorpay payment was already processed
         existing_payment = (
             db.query(Payment)
-            .filter(
-                Payment.payment_id == payload.payment_id
-            )
+            .filter(Payment.payment_id == payload.payment_id)
             .first()
         )
 
-        # Prevent duplicate webhook processing.
         if existing_payment is not None:
             return {
+                "status": "duplicate",
+                "message": "payment webhook already processed",
                 "payment_id": existing_payment.id,
                 "razorpay_payment_id": existing_payment.payment_id,
-                "status": "already_processed",
-                "message": "payment webhook already processed",
             }
 
-        # Create payment record.
         payment = Payment(
             payment_id=payload.payment_id,
             merchant_id=payload.merchant_id,
@@ -44,10 +41,30 @@ class RazorpayWebhookService:
         )
 
         db.add(payment)
-        db.commit()
-        db.refresh(payment)
 
-        # Convert webhook into internal payment event.
+        try:
+            db.commit()
+            db.refresh(payment)
+
+        except IntegrityError:
+            db.rollback()
+
+            existing_payment = (
+                db.query(Payment)
+                .filter(Payment.payment_id == payload.payment_id)
+                .first()
+            )
+
+            if existing_payment is not None:
+                return {
+                    "status": "duplicate",
+                    "message": "payment webhook already processed",
+                    "payment_id": existing_payment.id,
+                    "razorpay_payment_id": existing_payment.payment_id,
+                }
+
+            raise
+
         event = PaymentEvent(
             payment_id=payload.payment_id,
             merchant_id=payload.merchant_id,
@@ -59,7 +76,6 @@ class RazorpayWebhookService:
             failure_reason=payload.failure_reason,
         )
 
-        # Run complete AI revenue recovery pipeline.
         result = RiskDetectionService().evaluate(
             db=db,
             event=event,
@@ -67,9 +83,9 @@ class RazorpayWebhookService:
         )
 
         return {
+            "status": "processed",
             "payment_id": payment.id,
             "razorpay_payment_id": payload.payment_id,
-            "status": "processed",
             "risk": result["risk"],
             "diagnosis": result["diagnosis"],
             "prediction": result["prediction"],
