@@ -1,5 +1,8 @@
+from dataclasses import asdict, is_dataclass
+
 from sqlalchemy.orm import Session
 
+from backend.database.models import Payment
 from backend.revenue_monitor.events import PaymentEvent
 from backend.risk_detection.action import create_recovery_action
 from backend.risk_detection.detector import RiskDetector
@@ -18,6 +21,7 @@ from backend.risk_detection.verification import RecoveryVerifier
 
 
 class RiskDetectionService:
+
     def __init__(self):
         self.detector = RiskDetector()
         self.scorer = OpportunityScorer()
@@ -36,6 +40,10 @@ class RiskDetectionService:
         event: PaymentEvent,
         database_payment_id: int,
     ):
+        # ---------------------------------------------------------
+        # Payment event data
+        # ---------------------------------------------------------
+
         payment = {
             "payment_id": event.payment_id,
             "merchant_id": event.merchant_id,
@@ -47,7 +55,10 @@ class RiskDetectionService:
             "failure_reason": event.failure_reason,
         }
 
-        # 1. Detect payment risk
+        # ---------------------------------------------------------
+        # Initial state
+        # ---------------------------------------------------------
+
         risk = self.detector.assess(payment)
 
         opportunity = None
@@ -62,25 +73,39 @@ class RiskDetectionService:
         merchant_learning = None
         recovery_action = None
         recovery_outcome = None
+
         previous_failures = 0
+
+        # ---------------------------------------------------------
+        # Run recovery pipeline only for risky payments
+        # ---------------------------------------------------------
 
         if risk.is_risky:
 
-            # 2. Get historical failure information
+            # =====================================================
+            # 1. Historical failure analysis
+            # =====================================================
+
             previous_failures = get_previous_failure_count(
                 db=db,
                 merchant_id=event.merchant_id,
                 payment_id=database_payment_id,
             )
 
-            # 3. Calculate recovery opportunity score
+            # =====================================================
+            # 2. Recovery Opportunity Score
+            # =====================================================
+
             opportunity_score = self.scorer.calculate(
                 risk_score=risk.risk_score,
                 amount=event.amount,
                 previous_failures=previous_failures,
             )
 
-            # 4. Diagnose root cause
+            # =====================================================
+            # 3. Root Cause Diagnosis
+            # =====================================================
+
             diagnosis = self.diagnoser.diagnose(
                 status=event.status,
                 failure_reason=event.failure_reason,
@@ -88,7 +113,10 @@ class RiskDetectionService:
                 previous_failures=previous_failures,
             )
 
-            # 5. Store customer recovery memory
+            # =====================================================
+            # 4. Customer Recovery Memory
+            # =====================================================
+
             memory = self.memory.record(
                 db=db,
                 customer_id=event.customer_id,
@@ -96,14 +124,47 @@ class RiskDetectionService:
                 root_cause=diagnosis.root_cause,
             )
 
-            # 6. Predict recovery outcome
+            # =====================================================
+            # 5. Merchant-Level Learning
+            #
+            # IMPORTANT:
+            # Run merchant learning BEFORE prediction so that
+            # historical merchant recovery performance can
+            # influence the next recovery decision.
+            # =====================================================
+
+            merchant_learning = self.merchant_learning.learn(
+                db=db,
+                merchant_id=event.merchant_id,
+            )
+
+            merchant_recovery_rate = (
+                merchant_learning.recovery_rate
+                if merchant_learning is not None
+                else 0.0
+            )
+
+            # =====================================================
+            # 6. Predict Best Recovery Action
+            #
+            # Predictor now uses:
+            # - root cause
+            # - previous failures
+            # - payment amount
+            # - merchant historical recovery rate
+            # =====================================================
+
             prediction = self.predictor.predict(
                 amount=event.amount,
                 root_cause=diagnosis.root_cause,
                 previous_failures=previous_failures,
+                merchant_recovery_rate=merchant_recovery_rate,
             )
 
-            # 7. Check whether predicted action is safe
+            # =====================================================
+            # 7. Recovery Safety Guard
+            # =====================================================
+
             guard_decision = self.guard.check(
                 action=prediction.recommended_action,
                 confidence=diagnosis.confidence,
@@ -111,10 +172,10 @@ class RiskDetectionService:
                 amount=event.amount,
             )
 
-            # 8. Execute only if Guard allows it
-            #
-            # payment_id and amount are passed to the executor so that
-            # the Razorpay integration layer can receive the payment data.
+            # =====================================================
+            # 8. Execute Recovery Action
+            # =====================================================
+
             execution = self.executor.execute(
                 action=prediction.recommended_action,
                 guard_allowed=guard_decision.allowed,
@@ -122,37 +183,68 @@ class RiskDetectionService:
                 amount=event.amount,
             )
 
-            # 9. Verify recovery outcome
+            # =====================================================
+            # 9. Verify Recovery
+            # =====================================================
+
+            payment_status = getattr(
+                execution,
+                "payment_status",
+                event.status,
+            )
+
             verification = self.verifier.verify(
                 executed=execution.executed,
-                payment_status=event.status,
+                payment_status=payment_status,
                 amount=event.amount,
             )
 
-            # 10. Learn from customer recovery outcome
-            learning = self.learning.learn(
-                db=db,
-                memory_id=memory.id,
-                recovered=verification.recovered,
+            # =====================================================
+            # 10. Update Payment State
+            # =====================================================
+
+            payment_record = (
+                db.query(Payment)
+                .filter(
+                    Payment.id == database_payment_id
+                )
+                .first()
             )
 
-            # 11. Learn merchant-level recovery pattern
-            merchant_learning = self.merchant_learning.learn(
-                db=db,
-                merchant_id=event.merchant_id,
-            )
+            if payment_record is not None:
 
-            # 12. Create recovery opportunity
+                if verification.recovered:
+                    payment_record.status = "captured"
+                    payment_record.failure_reason = None
+
+                elif execution.executed:
+                    payment_record.status = "failed"
+
+                db.commit()
+                db.refresh(payment_record)
+
+            # =====================================================
+            # 11. Create Recovery Opportunity
+            # =====================================================
+
             opportunity = create_recovery_opportunity(
                 db=db,
                 payment_id=database_payment_id,
                 customer_id=event.customer_id,
-                risk_score=opportunity_score.score,
+                risk_score=(
+                    opportunity_score.score
+                    if opportunity_score is not None
+                    else risk.risk_score
+                ),
                 reason=diagnosis.root_cause,
             )
 
-            # 13. Persist recovery action
+            # =====================================================
+            # 12. Create Recovery Action
+            # =====================================================
+
             if opportunity is not None:
+
                 recovery_action = create_recovery_action(
                     db=db,
                     opportunity_id=opportunity.id,
@@ -160,7 +252,10 @@ class RiskDetectionService:
                     reason=diagnosis.root_cause,
                 )
 
-                # 14. Persist verified recovery outcome
+                # =================================================
+                # 13. Create Recovery Outcome
+                # =================================================
+
                 recovery_outcome = create_recovery_outcome(
                     db=db,
                     action_id=recovery_action.id,
@@ -173,20 +268,210 @@ class RiskDetectionService:
                     ),
                 )
 
+                # =================================================
+                # 14. Update Opportunity Lifecycle
+                # =================================================
+
+                if verification.recovered:
+                    opportunity.status = "recovered"
+
+                elif execution.executed:
+                    opportunity.status = "failed"
+
+                else:
+                    opportunity.status = "blocked"
+
+                db.commit()
+                db.refresh(opportunity)
+
+                # =================================================
+                # 15. Customer-Level Learning
+                # =================================================
+
+                learning = self.learning.learn_from_outcome(
+                    db=db,
+                    outcome=recovery_outcome,
+                )
+
+                # =================================================
+                # 16. Refresh Merchant Learning
+                #
+                # The current attempt has now completed, so
+                # merchant statistics should include this outcome.
+                # =================================================
+
+                merchant_learning = self.merchant_learning.learn(
+                    db=db,
+                    merchant_id=event.merchant_id,
+                )
+
+        # ---------------------------------------------------------
+        # JSON-safe opportunity response
+        # ---------------------------------------------------------
+
+        opportunity_data = None
+
+        if opportunity is not None:
+
+            opportunity_data = {
+                "id": opportunity.id,
+
+                "payment_id": (
+                    opportunity.payment_id
+                ),
+
+                "customer_id": (
+                    opportunity.customer_id
+                ),
+
+                "risk_score": (
+                    opportunity_score.score
+                    if opportunity_score is not None
+                    else opportunity.score
+                ),
+
+                "reason": (
+                    diagnosis.root_cause
+                    if diagnosis is not None
+                    else opportunity.root_cause
+                ),
+
+                "status": (
+                    opportunity.status
+                ),
+            }
+
+        # ---------------------------------------------------------
+        # JSON-safe recovery action response
+        # ---------------------------------------------------------
+
+        recovery_action_data = None
+
+        if recovery_action is not None:
+
+            recovery_action_data = {
+                "id": recovery_action.id,
+
+                "opportunity_id": (
+                    recovery_action.opportunity_id
+                ),
+
+                "action_type": (
+                    recovery_action.action_type
+                ),
+
+                "reason": (
+                    diagnosis.root_cause
+                    if diagnosis is not None
+                    else None
+                ),
+            }
+
+        # ---------------------------------------------------------
+        # JSON-safe recovery outcome response
+        # ---------------------------------------------------------
+
+        recovery_outcome_data = None
+
+        if recovery_outcome is not None:
+
+            recovery_outcome_data = {
+                "id": recovery_outcome.id,
+
+                "action_id": (
+                    recovery_outcome.action_id
+                ),
+
+                "recovered": (
+                    recovery_outcome.outcome
+                    == "recovered"
+                ),
+
+                "outcome": (
+                    recovery_outcome.outcome
+                ),
+
+                "recovered_amount": (
+                    recovery_outcome.recovered_amount
+                ),
+
+                "failure_reason": (
+                    recovery_outcome.failure_reason
+                ),
+            }
+
+        # ---------------------------------------------------------
+        # Dataclass serializer
+        # ---------------------------------------------------------
+
+        def serialize(value):
+
+            if value is None:
+                return None
+
+            if is_dataclass(value):
+                return asdict(value)
+
+            return value
+
+        # ---------------------------------------------------------
+        # Final response
+        # ---------------------------------------------------------
+
         return {
             "payment": payment,
-            "risk": risk,
-            "previous_failures": previous_failures,
-            "opportunity_score": opportunity_score,
-            "diagnosis": diagnosis,
-            "memory": memory,
-            "prediction": prediction,
-            "guard": guard_decision,
-            "execution": execution,
-            "verification": verification,
-            "learning": learning,
-            "merchant_learning": merchant_learning,
-            "opportunity": opportunity,
-            "recovery_action": recovery_action,
-            "recovery_outcome": recovery_outcome,
+
+            "risk": serialize(
+                risk
+            ),
+
+            "previous_failures": (
+                previous_failures
+            ),
+
+            "opportunity_score": serialize(
+                opportunity_score
+            ),
+
+            "diagnosis": serialize(
+                diagnosis
+            ),
+
+            "memory": serialize(
+                memory
+            ),
+
+            "prediction": serialize(
+                prediction
+            ),
+
+            "guard": serialize(
+                guard_decision
+            ),
+
+            "execution": serialize(
+                execution
+            ),
+
+            "verification": serialize(
+                verification
+            ),
+
+            "learning": serialize(
+                learning
+            ),
+
+            "merchant_learning": serialize(
+                merchant_learning
+            ),
+
+            "opportunity": opportunity_data,
+
+            "recovery_action": (
+                recovery_action_data
+            ),
+
+            "recovery_outcome": (
+                recovery_outcome_data
+            ),
         }

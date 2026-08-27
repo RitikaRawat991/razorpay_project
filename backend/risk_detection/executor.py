@@ -9,6 +9,7 @@ class ExecutionResult:
     action: str
     message: str
     external_reference: str | None = None
+    payment_status: str = "failed"
 
 
 class RecoveryActionExecutor:
@@ -73,4 +74,5 @@ class RecoveryActionExecutor:
             action=result.action,
             message=result.message,
             external_reference=result.external_reference,
+            payment_status=result.payment_status,
         )

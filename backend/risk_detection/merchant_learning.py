@@ -22,6 +22,8 @@ class MerchantLearningService:
         merchant_id: int,
     ) -> MerchantLearningResult:
 
+        # Get all recovery memories belonging to this merchant.
+        # RecoveryMemory -> Payment -> merchant_id
         memories = (
             db.query(RecoveryMemory)
             .join(
@@ -34,19 +36,25 @@ class MerchantLearningService:
             .all()
         )
 
+        # Count successful recoveries.
         total_recoveries = sum(
             1
             for memory in memories
             if memory.recovery_status == "recovered"
         )
 
+        # Count failed recoveries.
         total_failures = sum(
             1
             for memory in memories
             if memory.recovery_status == "failed"
         )
 
-        total_outcomes = total_recoveries + total_failures
+        # Ignore pending memories when calculating
+        # the actual recovery rate.
+        total_outcomes = (
+            total_recoveries + total_failures
+        )
 
         recovery_rate = (
             total_recoveries / total_outcomes

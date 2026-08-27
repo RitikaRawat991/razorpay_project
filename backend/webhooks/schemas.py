@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -30,4 +31,4 @@ class VerificationResponse(BaseModel):
 
 class WebhookResponse(BaseModel):
     status: str
-    result: dict
+    result: dict[str, Any]

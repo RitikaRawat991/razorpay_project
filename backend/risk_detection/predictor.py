@@ -15,33 +15,85 @@ class RecoveryPredictor:
         amount: int,
         root_cause: str,
         previous_failures: int,
+        merchant_recovery_rate: float = 0.0,
     ) -> RecoveryPrediction:
 
-        success_probability = 50
+        # ---------------------------------------------------------
+        # 1. Base probability from root cause
+        # ---------------------------------------------------------
 
         if root_cause == "insufficient_funds":
-            success_probability = 75
+            base_probability = 75
 
         elif root_cause == "issuer_decline":
-            success_probability = 65
+            base_probability = 65
 
         elif root_cause == "payment_failure":
-            success_probability = 55
+            base_probability = 55
+
+        else:
+            base_probability = 50
+
+        # ---------------------------------------------------------
+        # 2. Historical failure penalty
+        # ---------------------------------------------------------
 
         if previous_failures >= 3:
-            success_probability -= 10
+            base_probability -= 10
+
+        # ---------------------------------------------------------
+        # 3. High-value payment penalty
+        # ---------------------------------------------------------
 
         if amount >= 100000:
-            success_probability -= 5
+            base_probability -= 5
+
+        # ---------------------------------------------------------
+        # 4. Merchant-level learning
+        #
+        # Blend model estimate with merchant's historical
+        # recovery performance.
+        #
+        # 70% = root-cause prediction
+        # 30% = merchant historical performance
+        # ---------------------------------------------------------
+
+        merchant_rate = max(
+            0.0,
+            min(1.0, merchant_recovery_rate),
+        )
+
+        merchant_probability = merchant_rate * 100
+
+        success_probability = (
+            base_probability * 0.70
+            + merchant_probability * 0.30
+        )
+
+        success_probability = int(
+            round(success_probability)
+        )
+
+        # ---------------------------------------------------------
+        # 5. Safety bounds
+        # ---------------------------------------------------------
 
         success_probability = max(
             0,
             min(100, success_probability),
         )
 
+        # ---------------------------------------------------------
+        # 6. Expected recovery
+        # ---------------------------------------------------------
+
         expected_recovery = int(
             amount * success_probability / 100
         )
+
+        # ---------------------------------------------------------
+        # 7. Recommended action
+        # ---------------------------------------------------------
 
         if root_cause == "insufficient_funds":
             recommended_action = "retry_payment"

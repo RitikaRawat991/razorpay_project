@@ -1,4 +1,9 @@
 from dataclasses import dataclass
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @dataclass
@@ -7,33 +12,45 @@ class RazorpayActionResult:
     action: str
     message: str
     external_reference: str | None = None
+    payment_status: str = "failed"
 
 
 class RazorpayClient:
     """
-    Abstraction layer for Razorpay payment operations.
+    Safe Razorpay integration abstraction.
 
-    This keeps external Razorpay integration separate from
-    the recovery decision and execution logic.
+    In development, MOCK_RAZORPAY_SUCCESS=true simulates
+    a successful recovery so the complete RecoverIQ pipeline
+    can be tested without making a real Razorpay API call.
     """
+
+    def __init__(self):
+        self.mock_success = (
+            os.getenv("MOCK_RAZORPAY_SUCCESS", "false").lower()
+            == "true"
+        )
+
+    def _payment_status(self) -> str:
+        return "captured" if self.mock_success else "failed"
 
     def retry_payment(
         self,
         payment_id: str,
         amount: int,
     ) -> RazorpayActionResult:
-        """
-        Retry a failed payment.
 
-        For now this is a safe integration stub.
-        The actual Razorpay API call will be connected here.
-        """
+        status = self._payment_status()
 
         return RazorpayActionResult(
             success=True,
             action="retry_payment",
-            message=f"retry request accepted for payment {payment_id}",
+            message=(
+                f"retry request accepted for payment {payment_id}"
+                if status == "failed"
+                else f"payment retry succeeded for payment {payment_id}"
+            ),
             external_reference=payment_id,
+            payment_status=status,
         )
 
     def retry_alternate_method(
@@ -41,9 +58,8 @@ class RazorpayClient:
         payment_id: str,
         amount: int,
     ) -> RazorpayActionResult:
-        """
-        Request recovery through an alternate payment method.
-        """
+
+        status = self._payment_status()
 
         return RazorpayActionResult(
             success=True,
@@ -51,17 +67,20 @@ class RazorpayClient:
             message=(
                 f"alternate payment method request accepted "
                 f"for payment {payment_id}"
+                if status == "failed"
+                else f"alternate payment method succeeded "
+                     f"for payment {payment_id}"
             ),
             external_reference=payment_id,
+            payment_status=status,
         )
 
     def request_customer_action(
         self,
         payment_id: str,
     ) -> RazorpayActionResult:
-        """
-        Request customer action for payment recovery.
-        """
+
+        status = self._payment_status()
 
         return RazorpayActionResult(
             success=True,
@@ -71,4 +90,5 @@ class RazorpayClient:
                 f"for payment {payment_id}"
             ),
             external_reference=payment_id,
+            payment_status=status,
         )

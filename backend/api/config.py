@@ -11,5 +11,10 @@ class Settings:
     DEBUG = os.getenv("DEBUG", "false").lower() == "true"
     DATABASE_URL = os.getenv("DATABASE_URL")
 
+    RAZORPAY_WEBHOOK_SECRET = os.getenv(
+        "RAZORPAY_WEBHOOK_SECRET",
+        "dev_webhook_secret",
+    )
+
 
 settings = Settings()
