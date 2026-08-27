@@ -596,3 +596,42 @@ tr:last-child td {
     gap: 5px;
   }
 }
+.insights-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+
+.insight-card {
+  padding: 18px;
+  border: 1px solid #e6eaf0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.insight-title {
+  font-size: 12px;
+  color: #667085;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.insight-value {
+  font-size: 19px;
+  font-weight: 750;
+  color: #101828;
+  text-transform: capitalize;
+  margin-bottom: 7px;
+}
+
+.insight-description {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #667085;
+}
+
+@media (max-width: 1000px) {
+  .insights-grid {
+    grid-template-columns: 1fr;
+  }
+}
