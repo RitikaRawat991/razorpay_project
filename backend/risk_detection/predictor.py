@@ -50,12 +50,6 @@ class RecoveryPredictor:
 
         # ---------------------------------------------------------
         # 4. Merchant-level learning
-        #
-        # Blend model estimate with merchant's historical
-        # recovery performance.
-        #
-        # 70% = root-cause prediction
-        # 30% = merchant historical performance
         # ---------------------------------------------------------
 
         merchant_rate = max(
@@ -95,7 +89,10 @@ class RecoveryPredictor:
         # 7. Recommended action
         # ---------------------------------------------------------
 
-        if root_cause == "insufficient_funds":
+        if root_cause in {
+            "insufficient_funds",
+            "payment_failure",
+        }:
             recommended_action = "retry_payment"
 
         elif root_cause == "issuer_decline":

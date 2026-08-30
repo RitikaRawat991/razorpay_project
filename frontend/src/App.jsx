@@ -7,10 +7,27 @@ function formatAmount(amount) {
   return `₹${Number(amount || 0).toLocaleString("en-IN")}`;
 }
 
+function loadRazorpayScript() {
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
 function App() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentMessage, setPaymentMessage] = useState("");
 
   const fetchDashboard = async () => {
     try {
@@ -39,6 +56,106 @@ function App() {
   useEffect(() => {
     fetchDashboard();
   }, []);
+
+  const startTestPayment = async () => {
+    try {
+      setPaymentLoading(true);
+      setPaymentMessage("");
+
+      const scriptLoaded = await loadRazorpayScript();
+
+      if (!scriptLoaded) {
+        throw new Error(
+          "Razorpay Checkout script load nahi hua."
+        );
+      }
+
+      const response = await fetch(
+        `${API_BASE}/api/payments/create-order?amount=20000`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+
+        throw new Error(
+          errorData.detail || "Unable to create Razorpay order"
+        );
+      }
+
+      const order = await response.json();
+
+      const options = {
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: "RecoverIQ",
+        description: "RecoverIQ Test Payment",
+        order_id: order.order_id,
+
+        handler: function (paymentResponse) {
+          console.log(
+            "Razorpay payment success:",
+            paymentResponse
+          );
+
+          setPaymentMessage(
+            "Payment successful. Dashboard refresh kar raha hoon..."
+          );
+
+          setTimeout(() => {
+            fetchDashboard();
+          }, 2000);
+        },
+
+        modal: {
+          ondismiss: function () {
+            setPaymentLoading(false);
+          },
+        },
+
+        theme: {
+          color: "#111827",
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+
+      razorpay.on("payment.failed", function (response) {
+        console.log(
+          "Razorpay payment failed:",
+          response
+        );
+
+        const reason =
+          response?.error?.description ||
+          response?.error?.reason ||
+          "Payment failed";
+
+        setPaymentMessage(
+          `Payment failed: ${reason}. RecoverIQ webhook process karega.`
+        );
+
+        setPaymentLoading(false);
+
+        setTimeout(() => {
+          fetchDashboard();
+        }, 3000);
+      });
+
+      razorpay.open();
+    } catch (err) {
+      console.error(err);
+
+      setPaymentMessage(
+        err.message || "Test payment start nahi ho paya."
+      );
+
+      setPaymentLoading(false);
+    }
+  };
 
   const merchantInsights = useMemo(() => {
     if (!dashboard) return [];
@@ -173,13 +290,33 @@ function App() {
           </p>
         </div>
 
-        <button
-          className="refresh-btn"
-          onClick={fetchDashboard}
-        >
-          ↻ Refresh
-        </button>
+        <div className="header-actions">
+
+          <button
+            className="test-payment-btn"
+            onClick={startTestPayment}
+            disabled={paymentLoading}
+          >
+            {paymentLoading
+              ? "Opening Checkout..."
+              : "💳 Test Payment ₹200"}
+          </button>
+
+          <button
+            className="refresh-btn"
+            onClick={fetchDashboard}
+          >
+            ↻ Refresh
+          </button>
+
+        </div>
       </header>
+
+      {paymentMessage && (
+        <div className="payment-message">
+          {paymentMessage}
+        </div>
+      )}
 
       <main className="dashboard-content">
 

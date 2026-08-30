@@ -1,9 +1,7 @@
+import razorpay
 from dataclasses import dataclass
-import os
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from backend.api.config import settings
 
 
 @dataclass
@@ -12,26 +10,38 @@ class RazorpayActionResult:
     action: str
     message: str
     external_reference: str | None = None
-    payment_status: str = "failed"
+    payment_status: str = "pending"
+    key_id: str | None = None
 
 
 class RazorpayClient:
     """
-    Safe Razorpay integration abstraction.
+    Real Razorpay test-mode integration.
 
-    In development, MOCK_RAZORPAY_SUCCESS=true simulates
-    a successful recovery so the complete RecoverIQ pipeline
-    can be tested without making a real Razorpay API call.
+    RecoverIQ does NOT mark a payment as recovered itself.
+    It creates a new Razorpay order for the recovery attempt.
+
+    The actual payment result is confirmed later through
+    Razorpay's payment webhook.
     """
 
     def __init__(self):
-        self.mock_success = (
-            os.getenv("MOCK_RAZORPAY_SUCCESS", "false").lower()
-            == "true"
-        )
+        if not settings.RAZORPAY_KEY_ID:
+            raise RuntimeError(
+                "RAZORPAY_KEY_ID is not configured"
+            )
 
-    def _payment_status(self) -> str:
-        return "captured" if self.mock_success else "failed"
+        if not settings.RAZORPAY_KEY_SECRET:
+            raise RuntimeError(
+                "RAZORPAY_KEY_SECRET is not configured"
+            )
+
+        self.client = razorpay.Client(
+            auth=(
+                settings.RAZORPAY_KEY_ID,
+                settings.RAZORPAY_KEY_SECRET,
+            )
+        )
 
     def retry_payment(
         self,
@@ -39,19 +49,40 @@ class RazorpayClient:
         amount: int,
     ) -> RazorpayActionResult:
 
-        status = self._payment_status()
+        try:
+            order = self.client.order.create(
+                {
+                    "amount": amount,
+                    "currency": "INR",
+                    "receipt": f"recoveriq_{payment_id}",
+                    "notes": {
+                        "recoveriq_recovery": "true",
+                        "original_payment_id": payment_id,
+                    },
+                }
+            )
 
-        return RazorpayActionResult(
-            success=True,
-            action="retry_payment",
-            message=(
-                f"retry request accepted for payment {payment_id}"
-                if status == "failed"
-                else f"payment retry succeeded for payment {payment_id}"
-            ),
-            external_reference=payment_id,
-            payment_status=status,
-        )
+            return RazorpayActionResult(
+                success=True,
+                action="retry_payment",
+                message=(
+                    f"Recovery payment order created for "
+                    f"failed payment {payment_id}"
+                ),
+                external_reference=order["id"],
+                payment_status="pending",
+                key_id=settings.RAZORPAY_KEY_ID,
+            )
+
+        except Exception as exc:
+            return RazorpayActionResult(
+                success=False,
+                action="retry_payment",
+                message=f"Unable to create recovery order: {exc}",
+                external_reference=None,
+                payment_status="failed",
+                key_id=settings.RAZORPAY_KEY_ID,
+            )
 
     def retry_alternate_method(
         self,
@@ -59,20 +90,9 @@ class RazorpayClient:
         amount: int,
     ) -> RazorpayActionResult:
 
-        status = self._payment_status()
-
-        return RazorpayActionResult(
-            success=True,
-            action="retry_alternate_method",
-            message=(
-                f"alternate payment method request accepted "
-                f"for payment {payment_id}"
-                if status == "failed"
-                else f"alternate payment method succeeded "
-                     f"for payment {payment_id}"
-            ),
-            external_reference=payment_id,
-            payment_status=status,
+        return self.retry_payment(
+            payment_id=payment_id,
+            amount=amount,
         )
 
     def request_customer_action(
@@ -80,15 +100,14 @@ class RazorpayClient:
         payment_id: str,
     ) -> RazorpayActionResult:
 
-        status = self._payment_status()
-
         return RazorpayActionResult(
             success=True,
             action="request_customer_action",
             message=(
-                f"customer action request accepted "
-                f"for payment {payment_id}"
+                f"Customer action required for payment "
+                f"{payment_id}"
             ),
             external_reference=payment_id,
-            payment_status=status,
+            payment_status="pending",
+            key_id=settings.RAZORPAY_KEY_ID,
         )

@@ -635,3 +635,61 @@ tr:last-child td {
     grid-template-columns: 1fr;
   }
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.test-payment-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 18px;
+  background: #635bff;
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.test-payment-btn:hover {
+  opacity: 0.9;
+}
+
+.test-payment-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.payment-message {
+  max-width: 1400px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #e6eaf0;
+  color: #475467;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .header-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .test-payment-btn,
+  .refresh-btn {
+    width: 100%;
+  }
+}
+.header-actions {
+  position: relative;
+  z-index: 10;
+}
+
+.refresh-btn {
+  position: relative;
+  z-index: 11;
+  pointer-events: auto;
+}

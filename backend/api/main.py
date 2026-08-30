@@ -6,6 +6,7 @@ from backend.api.routes.health import router as health_router
 from backend.api.routes.root import router as root_router
 from backend.api.routes.webhooks import router as webhooks_router
 from backend.api.routes.analytics import router as analytics_router
+from backend.api.routes.payments import router as payments_router
 
 
 app = FastAPI(
@@ -41,3 +42,4 @@ app.include_router(root_router)
 app.include_router(health_router)
 app.include_router(webhooks_router)
 app.include_router(analytics_router)
+app.include_router(payments_router)

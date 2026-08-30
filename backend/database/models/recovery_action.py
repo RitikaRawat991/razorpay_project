@@ -36,6 +36,20 @@ class RecoveryAction(Base):
         nullable=True,
     )
 
+    # Real Razorpay recovery order created for this action
+    razorpay_order_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        index=True,
+    )
+
+    # Razorpay payment created after customer completes recovery checkout
+    razorpay_payment_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        index=True,
+    )
+
     executed_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,
