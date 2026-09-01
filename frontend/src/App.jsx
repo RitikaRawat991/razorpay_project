@@ -28,14 +28,16 @@ function App() {
   const [error, setError] = useState("");
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentMessage, setPaymentMessage] = useState("");
+  const [opportunities, setOpportunities] = useState([]);
 
   const fetchDashboard = async () => {
     try {
       setError("");
 
-      const response = await fetch(
-        `${API_BASE}/api/analytics/dashboard`
-      );
+      const [response, opportunitiesResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/analytics/dashboard`),
+        fetch(`${API_BASE}/api/analytics/opportunities`),
+      ]);
 
       if (!response.ok) {
         throw new Error("Failed to fetch dashboard data");
@@ -43,6 +45,10 @@ function App() {
 
       const data = await response.json();
       setDashboard(data);
+      if (opportunitiesResponse.ok) {
+        const opportunityData = await opportunitiesResponse.json();
+        setOpportunities(opportunityData.opportunities || []);
+      }
     } catch (err) {
       console.error(err);
       setError(
@@ -54,7 +60,11 @@ function App() {
   };
 
   useEffect(() => {
-    fetchDashboard();
+    // Schedule after the effect has subscribed so React does not treat the
+    // initial fetch's state changes as a synchronous effect update.
+    queueMicrotask(() => {
+      fetchDashboard();
+    });
   }, []);
 
   const startTestPayment = async () => {
@@ -123,7 +133,7 @@ function App() {
 
       const razorpay = new window.Razorpay(options);
 
-      razorpay.on("payment.failed", function (response) {
+      razorpay.on("payment.failed", async function (response) {
         console.log(
           "Razorpay payment failed:",
           response
@@ -134,15 +144,31 @@ function App() {
           response?.error?.reason ||
           "Payment failed";
 
-        setPaymentMessage(
-          `Payment failed: ${reason}. RecoverIQ webhook process karega.`
-        );
+        const paymentId = response?.error?.metadata?.payment_id;
 
-        setPaymentLoading(false);
-
-        setTimeout(() => {
-          fetchDashboard();
-        }, 3000);
+        try {
+          if (!paymentId) {
+            throw new Error("Razorpay failed payment ID missing hai.");
+          }
+          const reconciliation = await fetch(
+            `${API_BASE}/api/payments/failed/${paymentId}/reconcile`,
+            { method: "POST" }
+          );
+          const result = await reconciliation.json();
+          if (!reconciliation.ok) {
+            throw new Error(result.detail || "Failure verification failed");
+          }
+          setPaymentMessage(
+            `Payment failed: ${reason}. RecoverIQ recovery action created.`
+          );
+        } catch {
+          setPaymentMessage(
+            `Payment failed: ${reason}. Recovery verification pending.`
+          );
+        } finally {
+          setPaymentLoading(false);
+          setTimeout(fetchDashboard, 1200);
+        }
       });
 
       razorpay.open();
@@ -153,6 +179,63 @@ function App() {
         err.message || "Test payment start nahi ho paya."
       );
 
+      setPaymentLoading(false);
+    }
+  };
+
+  const startRecoveryPayment = async (actionId) => {
+    try {
+      setPaymentLoading(true);
+      setPaymentMessage("");
+      if (!(await loadRazorpayScript())) {
+        throw new Error("Razorpay Checkout load nahi hua.");
+      }
+
+      const response = await fetch(
+        `${API_BASE}/api/payments/recovery-checkout/${actionId}`
+      );
+      const checkout = await response.json();
+      if (!response.ok) {
+        throw new Error(checkout.detail || "Recovery Checkout unavailable");
+      }
+
+      const razorpay = new window.Razorpay({
+        key: checkout.key_id,
+        amount: checkout.amount,
+        currency: checkout.currency,
+        name: "RecoverIQ",
+        description: checkout.description,
+        order_id: checkout.order_id,
+        handler: async () => {
+          try {
+            const verification = await fetch(
+              `${API_BASE}/api/payments/recovery-actions/${actionId}/verify`,
+              { method: "POST" }
+            );
+            const result = await verification.json();
+            if (!verification.ok) {
+              throw new Error(result.detail || "Recovery verification failed");
+            }
+            setPaymentMessage(
+              result.status === "recovered"
+                ? "Payment verified. Revenue recovery completed."
+                : "Payment submitted. Razorpay verification is still pending."
+            );
+          } catch {
+            setPaymentMessage(
+              "Payment successful, but automatic verification is pending."
+            );
+          } finally {
+            setPaymentLoading(false);
+            setTimeout(fetchDashboard, 1200);
+          }
+        },
+        modal: { ondismiss: () => setPaymentLoading(false) },
+        theme: { color: "#111827" },
+      });
+      razorpay.open();
+    } catch (err) {
+      setPaymentMessage(err.message || "Recovery payment start nahi ho paya.");
       setPaymentLoading(false);
     }
   };
@@ -269,6 +352,16 @@ function App() {
     dashboard.recent_recoveries || [];
   const customerLearning =
     dashboard.customer_learning || [];
+  const pendingActions = opportunities.flatMap((opportunity) =>
+    (opportunity.actions || [])
+      .filter(
+        (action) =>
+          opportunity.status === "pending_recovery" &&
+          action.status === "executed" &&
+          Boolean(action.razorpay_order_id)
+      )
+      .map((action) => ({ ...action, opportunity }))
+  );
 
   const maxFunnelValue = Math.max(
     funnel.failed_payments || 0,
@@ -548,6 +641,46 @@ function App() {
 
           </div>
 
+        </section>
+
+        <section className="panel recoveries-panel">
+          <h2>Pending Recovery Payments</h2>
+          <div className="panel-description">
+            Complete an approved recovery directly in Razorpay Checkout.
+          </div>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Root Cause</th>
+                  <th>Recovery Order</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingActions.map(({ id, action_type, razorpay_order_id, opportunity }) => (
+                  <tr key={id}>
+                    <td>#{opportunity.customer_id}</td>
+                    <td>{opportunity.reason?.replaceAll("_", " ")}</td>
+                    <td className="payment-id">{razorpay_order_id}</td>
+                    <td>
+                      <button
+                        className="test-payment-btn"
+                        onClick={() => startRecoveryPayment(id)}
+                        disabled={paymentLoading}
+                      >
+                        {paymentLoading ? "Opening..." : `Pay via ${action_type}`}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {pendingActions.length === 0 && (
+                  <tr><td colSpan="4">No recovery payments are awaiting customer action.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
 
         {/* RECENT RECOVERIES */}

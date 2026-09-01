@@ -52,6 +52,24 @@ def dashboard(
         .count()
     )
 
+    pending_recoveries = (
+        db.query(RecoveryOpportunity)
+        .filter(RecoveryOpportunity.status == "pending_recovery")
+        .count()
+    )
+
+    executed_actions = (
+        db.query(RecoveryAction)
+        .filter(RecoveryAction.status == "executed")
+        .count()
+    )
+
+    blocked_actions = (
+        db.query(RecoveryAction)
+        .filter(RecoveryAction.status == "blocked")
+        .count()
+    )
+
     successful_recoveries = (
         db.query(RecoveryOutcome)
         .filter(
@@ -63,7 +81,7 @@ def dashboard(
     failed_recoveries = (
         db.query(RecoveryOutcome)
         .filter(
-            RecoveryOutcome.outcome != "recovered"
+            RecoveryOutcome.outcome == "failed"
         )
         .count()
     )
@@ -252,6 +270,9 @@ def dashboard(
                 total_opportunities
             ),
             "recovery_actions": total_actions,
+            "pending_recoveries": pending_recoveries,
+            "executed_actions": executed_actions,
+            "blocked_actions": blocked_actions,
             "successful_recoveries": (
                 successful_recoveries
             ),
@@ -308,6 +329,24 @@ def analytics_summary(
         .count()
     )
 
+    pending_recoveries = (
+        db.query(RecoveryOpportunity)
+        .filter(RecoveryOpportunity.status == "pending_recovery")
+        .count()
+    )
+
+    executed_actions = (
+        db.query(RecoveryAction)
+        .filter(RecoveryAction.status == "executed")
+        .count()
+    )
+
+    blocked_actions = (
+        db.query(RecoveryAction)
+        .filter(RecoveryAction.status == "blocked")
+        .count()
+    )
+
     successful_recoveries = (
         db.query(RecoveryOutcome)
         .filter(
@@ -319,7 +358,7 @@ def analytics_summary(
     failed_recoveries = (
         db.query(RecoveryOutcome)
         .filter(
-            RecoveryOutcome.outcome != "recovered"
+            RecoveryOutcome.outcome == "failed"
         )
         .count()
     )
@@ -366,6 +405,9 @@ def analytics_summary(
         "failed_payments": failed_payments,
         "recovery_opportunities": total_opportunities,
         "recovery_actions": total_actions,
+        "pending_recoveries": pending_recoveries,
+        "executed_actions": executed_actions,
+        "blocked_actions": blocked_actions,
         "successful_recoveries": successful_recoveries,
         "failed_recoveries": failed_recoveries,
         "recovered_amount": recovered_amount,
@@ -551,6 +593,8 @@ def get_opportunities(
                         "reason": (
                             action.reason
                         ),
+                        "status": action.status,
+                        "razorpay_order_id": action.razorpay_order_id,
                     }
                     for action in actions
                 ],

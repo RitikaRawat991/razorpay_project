@@ -1,4 +1,5 @@
 from dataclasses import asdict, is_dataclass
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -173,58 +174,8 @@ class RiskDetectionService:
             )
 
             # =====================================================
-            # 8. Execute Recovery Action
-            # =====================================================
-
-            execution = self.executor.execute(
-                action=prediction.recommended_action,
-                guard_allowed=guard_decision.allowed,
-                payment_id=event.payment_id,
-                amount=event.amount,
-            )
-
-            # =====================================================
-            # 9. Verify Recovery
-            # =====================================================
-
-            payment_status = getattr(
-                execution,
-                "payment_status",
-                event.status,
-            )
-
-            verification = self.verifier.verify(
-                executed=execution.executed,
-                payment_status=payment_status,
-                amount=event.amount,
-            )
-
-            # =====================================================
-            # 10. Update Payment State
-            # =====================================================
-
-            payment_record = (
-                db.query(Payment)
-                .filter(
-                    Payment.id == database_payment_id
-                )
-                .first()
-            )
-
-            if payment_record is not None:
-
-                if verification.recovered:
-                    payment_record.status = "captured"
-                    payment_record.failure_reason = None
-
-                elif execution.executed:
-                    payment_record.status = "failed"
-
-                db.commit()
-                db.refresh(payment_record)
-
-            # =====================================================
-            # 11. Create Recovery Opportunity
+            # 8. Create the auditable opportunity/action before execution.
+            # The original failed payment deliberately remains failed.
             # =====================================================
 
             opportunity = create_recovery_opportunity(
@@ -240,7 +191,7 @@ class RiskDetectionService:
             )
 
             # =====================================================
-            # 12. Create Recovery Action
+            # 9. Create Recovery Action (initially pending)
             # =====================================================
 
             if opportunity is not None:
@@ -253,57 +204,62 @@ class RiskDetectionService:
                 )
 
                 # =================================================
-                # 13. Create Recovery Outcome
+                # 10. Execute and persist the recovery-order reference.
+                # =================================================
+
+                execution = self.executor.execute(
+                    action=prediction.recommended_action,
+                    guard_allowed=guard_decision.allowed,
+                    payment_id=event.payment_id,
+                    amount=event.amount,
+                )
+
+                if execution.external_reference:
+                    recovery_action.razorpay_order_id = (
+                        execution.external_reference
+                    )
+
+                if execution.executed:
+                    recovery_action.status = "executed"
+                    recovery_action.executed_at = datetime.utcnow()
+                    opportunity.status = "pending_recovery"
+                else:
+                    recovery_action.status = "blocked"
+                    recovery_action.executed_at = None
+                    opportunity.status = "blocked"
+
+                db.commit()
+                db.refresh(recovery_action)
+                db.refresh(opportunity)
+
+                payment_status = getattr(execution, "payment_status", "failed")
+                verification = self.verifier.verify(
+                    executed=execution.executed,
+                    payment_status=payment_status,
+                    amount=event.amount,
+                )
+
+                # =================================================
+                # 11. Record an awaiting outcome, never false recovery.
                 # =================================================
 
                 recovery_outcome = create_recovery_outcome(
                     db=db,
                     action_id=recovery_action.id,
-                    recovered=verification.recovered,
-                    recovered_amount=verification.recovered_amount,
-                    failure_reason=(
-                        None
-                        if verification.recovered
-                        else verification.message
-                    ),
+                    pending=execution.executed and payment_status.lower() in {"pending", "processing", "created"},
+                    failure_reason=None if execution.executed else verification.message,
                 )
 
-                # =================================================
-                # 14. Update Opportunity Lifecycle
-                # =================================================
-
-                if verification.recovered:
-                    opportunity.status = "recovered"
-
-                elif execution.executed:
-                    opportunity.status = "failed"
-
-                else:
-                    opportunity.status = "blocked"
-
-                db.commit()
-                db.refresh(opportunity)
-
-                # =================================================
-                # 15. Customer-Level Learning
-                # =================================================
-
-                learning = self.learning.learn_from_outcome(
-                    db=db,
-                    outcome=recovery_outcome,
-                )
-
-                # =================================================
-                # 16. Refresh Merchant Learning
-                #
-                # The current attempt has now completed, so
-                # merchant statistics should include this outcome.
-                # =================================================
-
-                merchant_learning = self.merchant_learning.learn(
-                    db=db,
-                    merchant_id=event.merchant_id,
-                )
+                # Pending attempts are deliberately excluded from learning.
+                if recovery_outcome.outcome != "awaiting_confirmation":
+                    learning = self.learning.learn_from_outcome(
+                        db=db,
+                        outcome=recovery_outcome,
+                    )
+                    merchant_learning = self.merchant_learning.learn(
+                        db=db,
+                        merchant_id=event.merchant_id,
+                    )
 
         # ---------------------------------------------------------
         # JSON-safe opportunity response
@@ -335,7 +291,6 @@ class RiskDetectionService:
                     if diagnosis is not None
                     else opportunity.root_cause
                 ),
-
                 "status": (
                     opportunity.status
                 ),
@@ -365,6 +320,9 @@ class RiskDetectionService:
                     if diagnosis is not None
                     else None
                 ),
+                "status": recovery_action.status,
+                "razorpay_order_id": recovery_action.razorpay_order_id,
+                "razorpay_payment_id": recovery_action.razorpay_payment_id,
             }
 
         # ---------------------------------------------------------

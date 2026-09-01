@@ -75,10 +75,10 @@ async def razorpay_payment_webhook(
     event = webhook_data.get("event")
 
     # ------------------------------------------------------------
-    # 3. We only trigger recovery for payment.failed
+    # 3. Handle only failed-payment intake and verified recovery captures.
     # ------------------------------------------------------------
 
-    if event != "payment.failed":
+    if event not in {"payment.failed", "payment.captured"}:
         return {
             "status": "ignored",
             "result": {
@@ -103,6 +103,21 @@ async def razorpay_payment_webhook(
             status_code=400,
             detail="Payment entity missing from Razorpay webhook",
         )
+
+    if event == "payment.captured":
+        try:
+            amount = int(payment_entity.get("amount", 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Invalid payment amount")
+        if not payment_entity.get("id") or amount <= 0:
+            raise HTTPException(status_code=422, detail="Captured payment id and amount are required")
+        result = RazorpayWebhookService().process_captured_recovery(
+            db=db,
+            payment_id=str(payment_entity["id"]),
+            order_id=payment_entity.get("order_id"),
+            amount=amount,
+        )
+        return {"status": result["status"], "result": result}
 
     # ------------------------------------------------------------
     # 5. Extract merchant/customer metadata
